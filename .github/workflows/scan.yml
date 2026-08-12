@@ -30,8 +30,8 @@ jobs:
       - name: Installer les dépendances
         run: pip install lightkurve pandas astropy astroquery pillow
 
-      - name: Lancer le scan (5h50 max, laisse de la marge avant la limite de 6h de GitHub)
-        run: timeout 5h50m python3 exoplanet_bls_count.py all_targets_S108_v1.csv --limit 13000 || true
+      - name: Lancer le scan (350 min max, laisse de la marge avant la limite de 6h de GitHub)
+        run: timeout 350m python3 exoplanet_bls_count.py all_targets_S108_v1.csv --limit 13000 || true
 
       - name: Sauvegarder la progression dans le dépôt
         run: |

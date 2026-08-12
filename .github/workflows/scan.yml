@@ -1,0 +1,42 @@
+name: Scan exoplanetes
+
+# Se déclenche toutes les 6h automatiquement, et peut aussi être lancé
+# à la main depuis l'onglet Actions du dépôt (bouton "Run workflow").
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+# Empêche deux runs de tourner en même temps (ce qui casserait le
+# commit du CSV) -- un nouveau run programmé attend que le précédent
+# soit fini plutôt que de tourner en parallèle ou de l'annuler.
+concurrency:
+  group: scan-exoplanetes
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # nécessaire pour que le workflow commit le résultat
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install lightkurve pandas astropy astroquery pillow
+
+      - name: Lancer le scan (5h50 max, laisse de la marge avant la limite de 6h de GitHub)
+        run: timeout 5h50m python3 exoplanet_bls_count.py all_targets_S108_v1.csv --limit 13000 || true
+
+      - name: Sauvegarder la progression dans le dépôt
+        run: |
+          git config user.name "scan-bot"
+          git config user.email "scan-bot@users.noreply.github.com"
+          git add resultats_candidats.csv
+          git diff --staged --quiet || git commit -m "Progression du scan : $(wc -l < resultats_candidats.csv) lignes"
+          git push

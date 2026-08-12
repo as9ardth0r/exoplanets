@@ -39,4 +39,8 @@ jobs:
           git config user.email "scan-bot@users.noreply.github.com"
           git add resultats_candidats.csv
           git diff --staged --quiet || git commit -m "Progression du scan : $(wc -l < resultats_candidats.csv) lignes"
-          git push
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push && break
+            echo "Tentative $i échouée (le dépôt a changé entre-temps) -- nouvel essai..."
+            sleep 5
+          done

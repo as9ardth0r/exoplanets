@@ -33,14 +33,27 @@ jobs:
       - name: Lancer le scan (350 min max, laisse de la marge avant la limite de 6h de GitHub)
         run: timeout 350m python3 exoplanet_bls_count.py all_targets_S108_v1.csv --limit 13000 || true
 
-      - name: Sauvegarder la progression dans le dépôt
+      - name: Sauvegarder la progression (fusion par TIC ID, jamais de conflit Git)
         run: |
           git config user.name "scan-bot"
           git config user.email "scan-bot@users.noreply.github.com"
+
+          # On met de côté ce que CE run vient de produire, avant de
+          # toucher à quoi que ce soit côté Git.
+          cp resultats_candidats.csv /tmp/local_scan.csv
+
+          git fetch origin main
+          git show origin/main:resultats_candidats.csv > /tmp/remote_scan.csv 2>/dev/null || cp /tmp/local_scan.csv /tmp/remote_scan.csv
+
+          # Fusion par contenu (une ligne = une étoile, identifiée par
+          # son nom TIC), pas par position de ligne -- un autre run
+          # peut avoir ajouté des étoiles différentes entre-temps, on
+          # combine les deux plutôt que de laisser Git essayer (et
+          # échouer) de les concilier ligne à ligne.
+          python3 fusionner.py /tmp/remote_scan.csv /tmp/local_scan.csv /tmp/merged_scan.csv
+
+          git reset --hard origin/main
+          cp /tmp/merged_scan.csv resultats_candidats.csv
           git add resultats_candidats.csv
-          git diff --staged --quiet || git commit -m "Progression du scan : $(wc -l < resultats_candidats.csv) lignes"
-          for i in 1 2 3; do
-            git pull --rebase origin main && git push && break
-            echo "Tentative $i échouée (le dépôt a changé entre-temps) -- nouvel essai..."
-            sleep 5
-          done
+          git diff --staged --quiet || git commit -m "Progression du scan : $(wc -l < resultats_candidats.csv) lignes (fusion auto)"
+          git push

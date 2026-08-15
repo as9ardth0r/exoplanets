@@ -31,7 +31,7 @@ jobs:
         run: pip install lightkurve pandas astropy astroquery pillow
 
       - name: Lancer le scan (350 min max, laisse de la marge avant la limite de 6h de GitHub)
-        run: timeout 350m python3 exoplanet_bls_count.py all_targets_S107_v1.csv --limit 13000 || true
+        run: timeout 350m python3 exoplanet_bls_count.py all_targets_S107_v1.csv --limit 13000 --output resultats_S107.csv || true
 
       - name: Sauvegarder la progression (fusion par TIC ID, jamais de conflit Git)
         run: |
@@ -40,10 +40,10 @@ jobs:
 
           # On met de côté ce que CE run vient de produire, avant de
           # toucher à quoi que ce soit côté Git.
-          cp resultats_candidats.csv /tmp/local_scan.csv
+          cp resultats_S<N>.csv /tmp/local_scan.csv
 
           git fetch origin main
-          git show origin/main:resultats_candidats.csv > /tmp/remote_scan.csv 2>/dev/null || cp /tmp/local_scan.csv /tmp/remote_scan.csv
+          git show origin/main:resultats_S<N>.csv > /tmp/remote_scan.csv 2>/dev/null || cp /tmp/local_scan.csv /tmp/remote_scan.csv
 
           # Fusion par contenu (une ligne = une étoile, identifiée par
           # son nom TIC), pas par position de ligne -- un autre run
@@ -53,7 +53,7 @@ jobs:
           python3 fusionner.py /tmp/remote_scan.csv /tmp/local_scan.csv /tmp/merged_scan.csv
 
           git reset --hard origin/main
-          cp /tmp/merged_scan.csv resultats_candidats.csv
-          git add resultats_candidats.csv
-          git diff --staged --quiet || git commit -m "Progression du scan : $(wc -l < resultats_candidats.csv) lignes (fusion auto)"
+          cp /tmp/merged_scan.csv resultats_S107.csv
+          git add resultats_S107.csv
+          git diff --staged --quiet || git commit -m "Progression du scan S<N> : $(wc -l < resultats_S107.csv) lignes (fusion auto)"
           git push

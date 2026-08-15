@@ -1,24 +1,29 @@
-name: Scan exoplanetes
+name: Scan exoplanetes (multi-secteurs)
 
-# Se déclenche toutes les 6h automatiquement, et peut aussi être lancé
-# à la main depuis l'onglet Actions du dépôt (bouton "Run workflow").
+# Ajoute ou retire des numéros dans la liste "secteur" ci-dessous pour
+# choisir lesquels tourner. Chaque secteur listé devient un job
+# indépendant, exécuté en parallèle (pas 100+ dépôts séparés, juste
+# 100+ jobs dans UN dépôt) -- même mécanique que scan.yml, appliquée
+# à chaque secteur individuellement, sans jamais se marcher dessus
+# (chaque secteur écrit dans son propre fichier resultats_S<N>.csv).
 on:
   schedule:
     - cron: "0 */6 * * *"
   workflow_dispatch:
 
-# Empêche deux runs de tourner en même temps (ce qui casserait le
-# commit du CSV) -- un nouveau run programmé attend que le précédent
-# soit fini plutôt que de tourner en parallèle ou de l'annuler.
-concurrency:
-  group: scan-exoplanetes
-  cancel-in-progress: false
-
 permissions:
-  contents: write   # nécessaire pour que le workflow commit le résultat
+  contents: write
 
 jobs:
   scan:
+    strategy:
+      fail-fast: false   # un secteur qui plante n'arrête pas les autres
+      max-parallel: 10    # limite raisonnable de jobs simultanés -- ajustable
+      matrix:
+        secteur: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]   # <- ajoute tes numéros de secteur ici
+    concurrency:
+      group: scan-secteur-${{ matrix.secteur }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -30,30 +35,26 @@ jobs:
       - name: Installer les dépendances
         run: pip install lightkurve pandas astropy astroquery pillow
 
-      - name: Lancer le scan (350 min max, laisse de la marge avant la limite de 6h de GitHub)
-        run: timeout 350m python3 exoplanet_bls_count.py all_targets_S107_v1.csv --limit 13000 --output resultats_S107.csv || true
+      - name: Lancer le scan du secteur ${{ matrix.secteur }}
+        run: >
+          timeout 350m python3 exoplanet_bls_count.py
+          all_targets_S${{ matrix.secteur }}_v1.csv
+          --limit 13000
+          --output resultats_S${{ matrix.secteur }}.csv
+          || true
 
-      - name: Sauvegarder la progression (fusion par TIC ID, jamais de conflit Git)
+      - name: Sauvegarder (fichiers séparés par secteur, pas de conflit possible entre jobs)
         run: |
           git config user.name "scan-bot"
           git config user.email "scan-bot@users.noreply.github.com"
-
-          # On met de côté ce que CE run vient de produire, avant de
-          # toucher à quoi que ce soit côté Git.
-          cp resultats_S<N>.csv /tmp/local_scan.csv
-
-          git fetch origin main
-          git show origin/main:resultats_S<N>.csv > /tmp/remote_scan.csv 2>/dev/null || cp /tmp/local_scan.csv /tmp/remote_scan.csv
-
-          # Fusion par contenu (une ligne = une étoile, identifiée par
-          # son nom TIC), pas par position de ligne -- un autre run
-          # peut avoir ajouté des étoiles différentes entre-temps, on
-          # combine les deux plutôt que de laisser Git essayer (et
-          # échouer) de les concilier ligne à ligne.
-          python3 fusionner.py /tmp/remote_scan.csv /tmp/local_scan.csv /tmp/merged_scan.csv
-
-          git reset --hard origin/main
-          cp /tmp/merged_scan.csv resultats_S107.csv
-          git add resultats_S107.csv
-          git diff --staged --quiet || git commit -m "Progression du scan S<N> : $(wc -l < resultats_S107.csv) lignes (fusion auto)"
-          git push
+          for i in 1 2 3; do
+            git pull --rebase origin main && break
+            sleep $((RANDOM % 20 + 5))
+          done
+          git add resultats_S${{ matrix.secteur }}.csv
+          git diff --staged --quiet || git commit -m "Secteur ${{ matrix.secteur }} : $(wc -l < resultats_S${{ matrix.secteur }}.csv) lignes"
+          for i in 1 2 3; do
+            git push && break
+            git pull --rebase origin main
+            sleep $((RANDOM % 20 + 5))
+          done

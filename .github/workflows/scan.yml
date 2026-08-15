@@ -1,10 +1,11 @@
-name: Scan exoplanetes (multi-secteurs, détection automatique)
+name: Scan exoplanetes (multi-secteurs, telechargement auto)
 
-# Aucune liste de secteurs à maintenir à la main : le premier job
-# repère tout seul les fichiers all_targets_S<N>_v1.csv présents à la
-# racine du dépôt, et le second en fait une matrice -- ajoute ou
-# retire un fichier de cibles, le nombre de secteurs scannés suit
-# automatiquement au prochain run.
+# Aucun fichier à télécharger ou committer à la main : ce workflow va
+# chercher lui-même les listes de cibles manquantes directement sur
+# tess.mit.edu, pour chaque secteur de la plage définie ci-dessous.
+#
+# Pour changer la plage de secteurs scannés, modifie uniquement la
+# ligne "seq 1 108" dans le job generer-plage.
 on:
   schedule:
     - cron: "0 */6 * * *"
@@ -14,29 +15,24 @@ permissions:
   contents: write
 
 jobs:
-  detect-secteurs:
+  generer-plage:
     runs-on: ubuntu-latest
     outputs:
-      secteurs: ${{ steps.detect.outputs.secteurs }}
+      secteurs: ${{ steps.plage.outputs.secteurs }}
     steps:
-      - uses: actions/checkout@v5
-
-      - id: detect
+      - id: plage
         run: |
-          SECTEURS=$(ls all_targets_S*_v1.csv 2>/dev/null \
-            | sed -E 's/all_targets_S([0-9]+)_v1\.csv/\1/' \
-            | sort -n \
-            | jq -R -s -c 'split("\n")[:-1] | map(tonumber)')
+          SECTEURS=$(seq 1 108 | jq -R -s -c 'split("\n")[:-1] | map(tonumber)')
           echo "secteurs=$SECTEURS" >> "$GITHUB_OUTPUT"
-          echo "Secteurs détectés : $SECTEURS"
+          echo "Plage : $SECTEURS"
 
   scan:
-    needs: detect-secteurs
+    needs: generer-plage
     strategy:
-      fail-fast: false   # un secteur qui plante n'arrête pas les autres
-      max-parallel: 10    # nombre de secteurs traités en même temps -- ajustable
+      fail-fast: false
+      max-parallel: 10
       matrix:
-        secteur: ${{ fromJson(needs.detect-secteurs.outputs.secteurs) }}
+        secteur: ${{ fromJson(needs.generer-plage.outputs.secteurs) }}
     concurrency:
       group: scan-secteur-${{ matrix.secteur }}
       cancel-in-progress: false
@@ -51,15 +47,28 @@ jobs:
       - name: Installer les dépendances
         run: pip install lightkurve pandas astropy astroquery pillow
 
-      - name: Lancer le scan du secteur ${{ matrix.secteur }}
-        run: >
-          timeout 350m python3 exoplanet_bls_count.py
-          all_targets_S${{ matrix.secteur }}_v1.csv
-          --limit 13000
-          --output resultats_S${{ matrix.secteur }}.csv
-          || true
+      - name: Récupérer la liste de cibles du secteur ${{ matrix.secteur }} (si absente)
+        run: |
+          SECTEUR_PAD=$(printf "%03d" ${{ matrix.secteur }})
+          FICHIER="all_targets_S${SECTEUR_PAD}_v1.csv"
+          if [ -f "$FICHIER" ]; then
+            echo "$FICHIER déjà présent, pas de téléchargement."
+          else
+            echo "Téléchargement de $FICHIER..."
+            curl -sL --fail "https://tess.mit.edu/public/target_lists/2m/${FICHIER}" -o "$FICHIER" \
+              || { echo "::error::Échec du téléchargement pour le secteur ${{ matrix.secteur }} (secteur inexistant ou pas encore observé ?)"; exit 0; }
+          fi
+          echo "FICHIER_CIBLES=$FICHIER" >> "$GITHUB_ENV"
 
-      - name: Sauvegarder (fichiers séparés par secteur, pas de conflit possible entre jobs)
+      - name: Lancer le scan du secteur ${{ matrix.secteur }}
+        run: |
+          if [ ! -s "$FICHIER_CIBLES" ]; then
+            echo "Pas de fichier de cibles valide pour ce secteur, on s'arrête ici."
+            exit 0
+          fi
+          timeout 340m python3 exoplanet_bls_count.py "$FICHIER_CIBLES" --limit 13000 --output "resultats_S${{ matrix.secteur }}.csv" || true
+
+      - name: Sauvegarder (fichiers de cibles + résultats, séparés par secteur)
         run: |
           git config user.name "scan-bot"
           git config user.email "scan-bot@users.noreply.github.com"
@@ -67,8 +76,13 @@ jobs:
             git pull --rebase origin main && break
             sleep $((RANDOM % 20 + 5))
           done
-          git add resultats_S${{ matrix.secteur }}.csv
-          git diff --staged --quiet || git commit -m "Secteur ${{ matrix.secteur }} : $(wc -l < resultats_S${{ matrix.secteur }}.csv) lignes"
+          # On archive aussi le fichier de cibles téléchargé, pour ne
+          # plus jamais avoir à le retélécharger sur un futur run.
+          git add "$FICHIER_CIBLES" 2>/dev/null || true
+          if [ -f "resultats_S${{ matrix.secteur }}.csv" ]; then
+            git add "resultats_S${{ matrix.secteur }}.csv"
+          fi
+          git diff --staged --quiet || git commit -m "Secteur ${{ matrix.secteur }}"
           for i in 1 2 3; do
             git push && break
             git pull --rebase origin main

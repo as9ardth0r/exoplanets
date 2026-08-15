@@ -31,7 +31,7 @@ jobs:
         run: pip install lightkurve pandas astropy astroquery pillow
 
       - name: Lancer le scan (350 min max, laisse de la marge avant la limite de 6h de GitHub)
-        run: timeout 350m python3 exoplanet_bls_count.py all_targets_S108_v1.csv --limit 13000 || true
+        run: timeout 350m python3 exoplanet_bls_count.py all_targets_S107_v1.csv --limit 13000 || true
 
       - name: Sauvegarder la progression (fusion par TIC ID, jamais de conflit Git)
         run: |

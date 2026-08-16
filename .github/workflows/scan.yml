@@ -7,8 +7,6 @@ name: Scan exoplanetes (multi-secteurs, telechargement auto)
 # Pour changer la plage de secteurs scannés, modifie uniquement la
 # ligne "seq 1 108" dans le job generer-plage.
 on:
-  schedule:
-    - cron: "0 */6 * * *"
   workflow_dispatch:
 
 permissions:

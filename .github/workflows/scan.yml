@@ -68,23 +68,35 @@ jobs:
           fi
           timeout 340m python3 exoplanet_bls_count.py "$FICHIER_CIBLES" --limit 13000 --output "resultats_S${{ matrix.secteur }}.csv" || true
 
-      - name: Sauvegarder (fichiers de cibles + résultats, séparés par secteur)
+      - name: Sauvegarder (fusion par TIC ID, robuste même en cas de chevauchement entre jobs)
         run: |
           git config user.name "scan-bot"
           git config user.email "scan-bot@users.noreply.github.com"
-          for i in 1 2 3; do
-            git pull --rebase origin main && break
-            sleep $((RANDOM % 20 + 5))
-          done
-          # On archive aussi le fichier de cibles téléchargé, pour ne
-          # plus jamais avoir à le retélécharger sur un futur run.
-          git add "$FICHIER_CIBLES" 2>/dev/null || true
-          if [ -f "resultats_S${{ matrix.secteur }}.csv" ]; then
-            git add "resultats_S${{ matrix.secteur }}.csv"
-          fi
-          git diff --staged --quiet || git commit -m "Secteur ${{ matrix.secteur }}"
-          for i in 1 2 3; do
-            git push && break
-            git pull --rebase origin main
-            sleep $((RANDOM % 20 + 5))
+          RESULTAT="resultats_S${{ matrix.secteur }}.csv"
+
+          for i in 1 2 3 4 5; do
+            git fetch origin main
+
+            if [ -f "$RESULTAT" ]; then
+              cp "$RESULTAT" /tmp/local_scan.csv
+              git show origin/main:"$RESULTAT" > /tmp/remote_scan.csv 2>/dev/null || cp /tmp/local_scan.csv /tmp/remote_scan.csv
+              python3 fusionner.py /tmp/remote_scan.csv /tmp/local_scan.csv /tmp/merged_scan.csv
+            fi
+
+            git reset --hard origin/main
+
+            if [ -f /tmp/merged_scan.csv ]; then
+              cp /tmp/merged_scan.csv "$RESULTAT"
+              git add "$RESULTAT"
+            fi
+            git add "$FICHIER_CIBLES" 2>/dev/null || true
+
+            git diff --staged --quiet || git commit -m "Secteur ${{ matrix.secteur }}"
+
+            if git push; then
+              echo "Poussé avec succès (tentative $i)"
+              break
+            fi
+            echo "Tentative $i échouée (un autre job a poussé entre-temps) -- nouvel essai..."
+            sleep $((RANDOM % 15 + 5))
           done
